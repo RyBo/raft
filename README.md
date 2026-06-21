@@ -17,18 +17,18 @@ Both use the same core. The visualizer plugs in a simulated transport in place o
 a real one.
 
 ```
-┌─────────────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────────────┐
 │  browser (React + Canvas)   <── WebSocket ──>   Go server │
-└─────────────────────────────────────────────────────────┘
-                                    │  events / commands
-                          ┌─────────▼──────────┐
-                          │  sim.Cluster        │  single goroutine,
-                          │  clock · bus · net  │  deterministic
-                          └─────────┬──────────┘
-                          N × ┌──────▼──────┐
-                              │ raft.RawNode │  the consensus core
-                              │  + KV FSM    │  (stdlib-only, importable)
-                              └─────────────┘
+└─────────────────────────────┴─────────────────────────────┘
+                              │  events / commands
+                   ┌──────────▼──────────┐
+                   │  sim.Cluster        │  single goroutine,
+                   │  clock · bus · net  │  deterministic
+                   └──────────┬──────────┘
+                  N × ┌───────▼────────┐
+                      │ raft.RawNode   │  the consensus core
+                      │ + KV FSM       │  (stdlib-only, importable)
+                      └────────────────┘
 ```
 
 ## Quick start
