@@ -61,6 +61,7 @@ type Cluster struct {
 	prevRole          map[uint64]string
 	prevTerm          map[uint64]uint64 // for term-change metric
 	electionStartTick map[uint64]uint64 // candidate-start tick, for election-duration metric
+	proposeTick       map[uint64]uint64 // leader log index -> tick, for commit-latency metric
 }
 
 // NewCluster builds a cluster of n nodes seeded for reproducibility. emit is
@@ -103,6 +104,7 @@ func (c *Cluster) build(n int) {
 	c.prevRole = map[uint64]string{}
 	c.prevTerm = map[uint64]uint64{}
 	c.electionStartTick = map[uint64]uint64{}
+	c.proposeTick = map[uint64]uint64{}
 
 	ids := make([]uint64, 0, n)
 	for i := 1; i <= n; i++ {
@@ -226,9 +228,20 @@ func (c *Cluster) drivePeer(p *peer) {
 		return
 	}
 	rd := p.node.Ready()
+	st := p.node.Status()
+	isLeader := st.State == raft.StateLeader
 
 	if rd.SoftState != nil {
-		c.onRoleChange(p.id, rd.SoftState.RaftState.String(), p.node.Status().Term)
+		c.onRoleChange(p.id, rd.SoftState.RaftState.String(), st.Term)
+	}
+
+	// Record when the leader appends a write, to measure commit latency later.
+	if c.metrics != nil && isLeader {
+		for _, e := range rd.Entries {
+			if e.Type == raft.EntryNormal && len(e.Data) > 0 {
+				c.proposeTick[e.Index] = c.tick
+			}
+		}
 	}
 
 	// 1. persist before sending.
@@ -271,6 +284,15 @@ func (c *Cluster) drivePeer(p *peer) {
 	// 4. serve confirmed reads.
 	for _, rs := range rd.ReadStates {
 		c.serveRead(p, rs)
+	}
+	// Observe commit latency for any of this leader's writes now committed.
+	if c.metrics != nil && isLeader {
+		for idx, pt := range c.proposeTick {
+			if idx <= st.Commit {
+				c.metrics.ObserveCommitLatency(float64(c.tick - pt))
+				delete(c.proposeTick, idx)
+			}
+		}
 	}
 	p.node.Advance(rd)
 	c.maybeCompact(p)
@@ -356,6 +378,11 @@ func (c *Cluster) scheduleSend(m raft.Message) {
 		c.metrics.IncMessageSent(from, m.Type.String())
 		if drop {
 			c.metrics.IncMessageDropped(m.Type.String())
+		} else {
+			c.metrics.ObserveDelivery(float64(deliver - c.tick))
+		}
+		if m.Type == raft.MsgApp {
+			c.metrics.ObserveAppendBatch(float64(len(m.Entries)))
 		}
 	}
 	c.send(MessageEvent{
@@ -416,6 +443,8 @@ func (c *Cluster) onRoleChange(id uint64, role string, term uint64) {
 	switch role {
 	case "leader":
 		c.logEvent("leader_elected", id, term, fmt.Sprintf("node %d became leader for term %d", id, term))
+		// New leadership term: discard any stale pending commit-latency tracking.
+		c.proposeTick = map[uint64]uint64{}
 		if c.metrics != nil {
 			c.metrics.IncLeaderElected(id)
 			if start, ok := c.electionStartTick[id]; ok {

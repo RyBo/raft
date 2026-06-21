@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -88,6 +89,7 @@ func TestWebSocketEndToEnd(t *testing.T) {
 		"raft_leaders_elected_total",
 		"raft_messages_sent_total",
 		"raft_committed_entries_total",
+		"raft_commit_latency_ticks_bucket",
 		"raft_node_term{node=",
 		"raft_nodes 3",
 	} {
@@ -95,6 +97,24 @@ func TestWebSocketEndToEnd(t *testing.T) {
 			t.Fatalf("/metrics output missing %q", want)
 		}
 	}
+	// The replicated write should have produced at least one commit-latency
+	// observation end-to-end.
+	if v := sampleValue(text, "raft_commit_latency_ticks_count"); v <= 0 {
+		t.Fatalf("expected commit-latency observations, got count=%v", v)
+	}
+}
+
+// sampleValue extracts the value of an unlabeled Prometheus sample line.
+func sampleValue(text, name string) float64 {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, name+" ") {
+			var v float64
+			if _, err := fmt.Sscanf(strings.TrimPrefix(line, name+" "), "%g", &v); err == nil {
+				return v
+			}
+		}
+	}
+	return -1
 }
 
 func send(t *testing.T, conn *websocket.Conn, cmd sim.Command) {

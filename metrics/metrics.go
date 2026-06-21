@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -55,7 +56,11 @@ type Metrics struct {
 	committed          prometheus.Counter
 	crashes            prometheus.Counter
 	restarts           prometheus.Counter
-	electionDuration   prometheus.Histogram
+
+	electionDuration prometheus.Histogram
+	commitLatency    prometheus.Histogram
+	deliveryTime     prometheus.Histogram
+	appendBatch      prometheus.Histogram
 
 	snap atomic.Pointer[Snapshot]
 }
@@ -91,15 +96,38 @@ func New() *Metrics {
 	m.crashes = c("raft_node_crashes_total", "Node crashes triggered.")
 	m.restarts = c("raft_node_restarts_total", "Node restarts triggered.")
 
-	m.electionDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "raft_election_duration_ticks",
-		Help:    "Ticks from becoming candidate to becoming leader.",
-		Buckets: []float64{1, 2, 4, 8, 16, 32, 64, 128},
-	})
-	m.reg.MustRegister(m.electionDuration)
+	// Dual-exposition histograms: classic buckets keep the text format (and the
+	// existing tests) working, while NativeHistogramBucketFactor adds a native
+	// (sparse) histogram that is exposed over the protobuf format.
+	m.electionDuration = m.newHistogram("raft_election_duration_ticks",
+		"Ticks from a node starting its campaign to becoming leader.",
+		[]float64{1, 2, 4, 8, 16, 32, 64, 128})
+	m.commitLatency = m.newHistogram("raft_commit_latency_ticks",
+		"Ticks from a write being appended on the leader to it being committed.",
+		[]float64{1, 2, 4, 8, 16, 32, 64})
+	m.deliveryTime = m.newHistogram("raft_message_delivery_ticks",
+		"Network in-flight time (ticks) for delivered messages.",
+		[]float64{1, 2, 3, 4, 6, 8, 12, 16})
+	m.appendBatch = m.newHistogram("raft_append_batch_entries",
+		"Entries carried per AppendEntries (MsgApp) message.",
+		[]float64{0, 1, 2, 4, 8, 16, 32})
 
 	m.reg.MustRegister(&gaugeCollector{m: m})
 	return m
+}
+
+// newHistogram builds a dual classic + native histogram and registers it.
+func (m *Metrics) newHistogram(name, help string, buckets []float64) prometheus.Histogram {
+	h := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:                            name,
+		Help:                            help,
+		Buckets:                         buckets,
+		NativeHistogramBucketFactor:     1.1,
+		NativeHistogramMaxBucketNumber:  100,
+		NativeHistogramMinResetDuration: time.Hour,
+	})
+	m.reg.MustRegister(h)
+	return h
 }
 
 // Handler returns the Prometheus exposition handler for this registry.
@@ -132,6 +160,9 @@ func (m *Metrics) IncCommitted()                         { m.committed.Inc() }
 func (m *Metrics) IncCrash()                             { m.crashes.Inc() }
 func (m *Metrics) IncRestart()                           { m.restarts.Inc() }
 func (m *Metrics) ObserveElectionDuration(ticks float64) { m.electionDuration.Observe(ticks) }
+func (m *Metrics) ObserveCommitLatency(ticks float64)    { m.commitLatency.Observe(ticks) }
+func (m *Metrics) ObserveDelivery(ticks float64)         { m.deliveryTime.Observe(ticks) }
+func (m *Metrics) ObserveAppendBatch(entries float64)    { m.appendBatch.Observe(entries) }
 
 // --- gauge collector ---
 

@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 )
 
 func TestMetricsExposition(t *testing.T) {
@@ -26,6 +29,9 @@ func TestMetricsExposition(t *testing.T) {
 	m.IncCrash()
 	m.IncRestart()
 	m.ObserveElectionDuration(7)
+	m.ObserveCommitLatency(5)
+	m.ObserveDelivery(2)
+	m.ObserveAppendBatch(3)
 
 	m.SetSnapshot(Snapshot{
 		Tick: 42, Leader: 2, Nodes: 3, Inflight: 5, Partitioned: true, KVKeys: 4,
@@ -61,6 +67,9 @@ func TestMetricsExposition(t *testing.T) {
 		`raft_node_crashes_total 1`,
 		`raft_node_restarts_total 1`,
 		"raft_election_duration_ticks_bucket",
+		"raft_commit_latency_ticks_bucket",
+		"raft_message_delivery_ticks_bucket",
+		"raft_append_batch_entries_bucket",
 		"raft_nodes 3",
 		"raft_tick 42",
 		"raft_leader_id 2",
@@ -74,5 +83,55 @@ func TestMetricsExposition(t *testing.T) {
 		if !strings.Contains(out, w) {
 			t.Errorf("metrics output missing %q", w)
 		}
+	}
+}
+
+// TestMetricsNativeHistogramProtobuf confirms the endpoint negotiates protobuf
+// and that the histograms are exposed as native (sparse) histograms there.
+func TestMetricsNativeHistogramProtobuf(t *testing.T) {
+	m := New()
+	for i := 0; i < 20; i++ {
+		m.ObserveElectionDuration(float64(i%8 + 1))
+	}
+
+	srv := httptest.NewServer(m.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL, nil)
+	req.Header.Set("Accept", "application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "application/vnd.google.protobuf") {
+		t.Fatalf("expected protobuf content type, got %q", ct)
+	}
+
+	dec := expfmt.NewDecoder(resp.Body, expfmt.ResponseFormat(resp.Header))
+	var found bool
+	for {
+		var mf dto.MetricFamily
+		if err := dec.Decode(&mf); err != nil {
+			break // io.EOF
+		}
+		if mf.GetName() != "raft_election_duration_ticks" {
+			continue
+		}
+		h := mf.GetMetric()[0].GetHistogram()
+		// A native histogram populates Schema (and positive spans); a classic-only
+		// histogram leaves these unset.
+		if h.Schema == nil {
+			t.Fatalf("election duration histogram is not native (Schema unset)")
+		}
+		if len(h.GetPositiveSpan()) == 0 {
+			t.Fatalf("native histogram has no positive spans")
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("raft_election_duration_ticks not found in protobuf output")
 	}
 }
