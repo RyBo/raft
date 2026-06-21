@@ -55,6 +55,12 @@ Prometheus metrics are exposed at `http://localhost:8080/metrics` (see
 
 ## What to try in the UI
 
+The layout is **key-value store + node detail on the left**, the **cluster graph
+in the center**, and **controls + event timeline on the right**. The header shows
+a live cluster-health pill (Healthy / Electing / Partitioned / No quorum /
+Degraded) with leader, term and quorum, and the **ⓘ** button opens a primer on
+Raft with links to the paper and production implementations.
+
 - **Watch an election.** Hit *Run*. A follower times out, campaigns (pre-vote →
   vote), and becomes leader. Messages animate along the edges, color-coded by
   type. The event timeline narrates it.
@@ -148,7 +154,24 @@ curl -s localhost:8080/metrics | grep '^raft_'
 `raft_reads_total{mode}` (linearizable|stale), `raft_node_crashes_total`,
 `raft_node_restarts_total`.
 
-**Histogram** — `raft_election_duration_ticks` (ticks from candidate to leader).
+**Histograms (native)** — exposed as Prometheus *native (sparse) histograms*,
+with classic buckets retained for the text format:
+`raft_election_duration_ticks` (campaign → leader),
+`raft_commit_latency_ticks` (write appended → committed),
+`raft_message_delivery_ticks` (network in-flight time), and
+`raft_append_batch_entries` (entries per `MsgApp`).
+
+Native histograms are only carried over the **protobuf** exposition format, which
+the endpoint serves via content negotiation — pass the protobuf `Accept` header:
+
+```sh
+curl -s -H 'Accept: application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited' \
+  localhost:8080/metrics -o /dev/null -w '%{content_type}\n'
+# application/vnd.google.protobuf; ...
+```
+
+Prometheus scrapes native histograms automatically when native histograms are
+enabled in its config; plain `curl` (text format) still shows the classic buckets.
 
 **Gauges** — `raft_nodes`, `raft_tick`, `raft_leader_id`, `raft_partitioned`,
 `raft_inflight_messages`, `raft_kv_keys`, and per-node `raft_node_term{node}`,
