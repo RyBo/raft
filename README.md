@@ -118,6 +118,62 @@ The key interfaces live in `raft/`: `Storage` reads the log and snapshot, while
 your own transport sends `rd.Messages` and your own state machine applies
 `rd.CommittedEntries`. A ready-made KV state machine lives in `kvstore/`.
 
+## Running a real multi-process cluster
+
+The visualizer runs every node in one process over a simulated network. The
+`raftnode` binary instead runs **one node per OS process**, talking to its peers
+over a real gRPC network and persisting to a real disk, so you can launch several,
+form a cluster, kill one, and watch it recover committed state from disk. It is
+built from three reusable pieces that plug into the consensus core:
+
+| Path         | What it provides                                                       |
+| ------------ | ---------------------------------------------------------------------- |
+| `walstore/`  | a durable `raft.Storage` on disk (a CRC-framed write-ahead log plus snapshots), stdlib-only |
+| `transport/` | a gRPC transport that ships `raft.Message`s between peers (best-effort) |
+| `node/`      | a single-node driver: it owns one `RawNode` on a goroutine and runs the persist→send→apply→advance loop |
+
+Launch a local three-node cluster:
+
+```sh
+make cluster        # builds bin/raftnode and starts nodes 1,2,3 (Ctrl-C stops them)
+```
+
+Or run a node by hand (repeat with distinct `-id`, `-raft-addr`, `-client-addr`,
+`-data`; give every node the same `-peers`):
+
+```sh
+bin/raftnode -id 1 -peers 1@127.0.0.1:9001,2@127.0.0.1:9002,3@127.0.0.1:9003 \
+             -raft-addr :9001 -client-addr :8001 -data ./data/n1
+```
+
+Each node serves a small HTTP API. Writes must reach the leader; a follower
+answers `503` with the leader's id in an `X-Raft-Leader` header.
+
+```sh
+curl -X PUT 127.0.0.1:8001/kv/foo -d bar    # replicate a write (waits for commit)
+curl 127.0.0.1:8002/kv/foo                  # linearizable read (ReadIndex)
+curl '127.0.0.1:8003/kv/foo?stale=true'     # local, possibly-stale read
+curl 127.0.0.1:8001/status                  # term, role, leader, commit, applied
+```
+
+To see durability, write a key, `Ctrl-C` (or `kill`) a node, then start it again
+with the same `-data` directory (and without changing `-peers`). It replays its
+log from disk and rejoins, recovering everything it had committed.
+
+The driver is generic over the state machine: any type with `Apply`, `Snapshot`
+and `Restore` (the `node.FSM` interface) works, so the bundled `kvstore` can be
+swapped for a different data model without touching the consensus core or the
+transport.
+
+The gRPC stubs in `transport/raftpb/` are committed, so a plain `go build` needs
+no protobuf toolchain. Regenerate them with `make proto` (requires `protoc`,
+`protoc-gen-go` and `protoc-gen-go-grpc`) after editing `transport/raft.proto`.
+
+This example runs a fixed three-node membership. Adding and removing members at
+runtime works in the core (and in the visualizer) but is left out of this binary;
+it would also need the transport's peer registry updated as the configuration
+changes.
+
 ## Features
 
 Core protocol: leader election, log replication, the commit rule, and the safety
@@ -196,7 +252,11 @@ Example PromQL: heartbeat rate
 | `metrics/`     | Prometheus instruments for Raft internals (`/metrics`)         |
 | `server/`      | WebSocket hub, HTTP server, and embedded UI                    |
 | `webui/`       | React, TypeScript, and Vite frontend (Canvas graph)            |
+| `walstore/`    | a durable on-disk `raft.Storage` (write-ahead log + snapshots)  |
+| `transport/`   | a real gRPC node-to-node transport for `raft.Message`s         |
+| `node/`        | a single-node driver for running one node per process          |
 | `cmd/raftdemo` | the visualizer binary                                          |
+| `cmd/raftnode` | the standalone single-node binary (real network + disk)        |
 
 ## Testing
 
