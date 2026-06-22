@@ -2,7 +2,7 @@ ADDR  ?= :8080
 NODES ?= 3
 SEED  ?= 1
 
-.PHONY: all build build-ui run dev dev-ui test test-race fuzz fmt vet clean
+.PHONY: all build build-ui build-node cluster proto run dev dev-ui test test-race fuzz fmt vet clean
 
 all: build
 
@@ -17,6 +17,20 @@ build: build-ui
 ## run: build then serve the visualizer at $(ADDR)
 run: build
 	./bin/raftdemo -addr $(ADDR) -nodes $(NODES) -seed $(SEED)
+
+## build-node: build the standalone single-node binary (real network + disk)
+build-node:
+	go build -o bin/raftnode ./cmd/raftnode
+
+## cluster: build and launch a local 3-node cluster over gRPC (Ctrl-C to stop)
+cluster: build-node
+	./scripts/cluster.sh
+
+## proto: regenerate the gRPC stubs (requires protoc + protoc-gen-go[-grpc])
+proto:
+	protoc --go_out=. --go_opt=module=github.com/rybo/raft \
+	       --go-grpc_out=. --go-grpc_opt=module=github.com/rybo/raft \
+	       transport/raft.proto
 
 ## dev: run the Go backend (serves /ws); pair with `make dev-ui`
 dev:
@@ -39,7 +53,7 @@ fuzz:
 	go test ./sim/ -run TestFuzz -v
 
 fmt:
-	gofmt -w raft sim metrics server cmd kvstore
+	gofmt -w raft sim metrics server cmd kvstore walstore transport node
 
 vet:
 	go vet ./...

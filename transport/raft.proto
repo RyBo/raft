@@ -1,0 +1,60 @@
+// Wire schema for the gRPC node-to-node Raft transport. The messages mirror the
+// Go types in the raft package (raft.Message and its nested Entry/Snapshot/
+// ConfState); enums are carried as uint32 so the proto stays decoupled from the
+// core's Go iota values while round-tripping them exactly.
+//
+// Regenerate the Go stubs with `make proto` (requires protoc, protoc-gen-go and
+// protoc-gen-go-grpc). The generated files in raftpb/ are committed so a plain
+// `go build ./...` needs no protobuf toolchain.
+syntax = "proto3";
+
+package raftpb;
+
+option go_package = "github.com/rybo/raft/transport/raftpb";
+
+message Entry {
+  uint64 term  = 1;
+  uint64 index = 2;
+  uint32 type  = 3; // raft.EntryType
+  bytes  data  = 4;
+}
+
+message ConfState {
+  repeated uint64 voters   = 1;
+  repeated uint64 learners = 2;
+}
+
+message SnapshotMetadata {
+  uint64    index      = 1;
+  uint64    term       = 2;
+  ConfState conf_state = 3;
+}
+
+message Snapshot {
+  bytes            data     = 1;
+  SnapshotMetadata metadata = 2;
+}
+
+message Message {
+  uint32          type        = 1;  // raft.MessageType
+  uint64          to          = 2;
+  uint64          from        = 3;
+  uint64          term        = 4;
+  uint64          log_term    = 5;
+  uint64          index       = 6;
+  repeated Entry  entries     = 7;
+  uint64          commit      = 8;
+  Snapshot        snapshot    = 9;  // unset when absent
+  bool            reject      = 10;
+  uint64          reject_hint = 11;
+  bytes           context     = 12;
+}
+
+message Ack {}
+
+// RaftTransport delivers Raft messages between peers. Delivery is best-effort:
+// the core retries via heartbeat and election timers, so a dropped Deliver is
+// harmless and the RPC is fire-and-forget from the sender's point of view.
+service RaftTransport {
+  rpc Deliver(Message) returns (Ack);
+}
