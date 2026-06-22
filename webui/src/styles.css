@@ -36,16 +36,52 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px 16px;
   padding: 10px 18px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
+.topbar b { color: var(--text); }
+
+.tb-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.tb-primary { gap: 16px; }
+.tb-secondary { color: var(--muted); }
+.tb-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); }
+
+/* Mobile: stack the topbar into two tidy rows. */
+.app.mobile .topbar {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 8px 12px;
+}
+.app.mobile .tb-row { width: 100%; justify-content: space-between; gap: 10px; }
+.app.mobile .tb-primary { flex-wrap: wrap; }
+.app.mobile .tb-stats { font-size: 12px; }
+.app.mobile .brand { font-size: 16px; }
+.app.mobile .cluster-pill { font-size: 11px; padding: 2px 8px; }
+
+.panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.panel-toggle:hover { color: var(--text); border-color: var(--accent); }
+.panel-toggle[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 
 .brand { font-size: 17px; font-weight: 700; letter-spacing: 0.2px; }
 .logo { color: var(--green); margin-right: 6px; }
 
-.topstats { display: flex; gap: 14px; align-items: center; color: var(--muted); }
-.topstats b { color: var(--text); }
 .conn.on { color: var(--green); }
 .conn.off { color: var(--red); }
 
@@ -129,30 +165,158 @@ body {
 .modal-links a { color: var(--accent); text-decoration: none; font-weight: 600; }
 .modal-links a:hover { text-decoration: underline; }
 
-@media (max-width: 1100px) {
-  .layout {
-    grid-template-columns: 1fr;
-    grid-auto-rows: minmax(0, auto);
-    overflow-y: auto;
-  }
-  .stage { min-height: 60vh; }
-  .sidebar.left, .sidebar.right { border: none; border-top: 1px solid var(--border); }
+/* Pin each region to its column so a collapsed (display:none) sidebar doesn't shift the others. */
+.app:not(.mobile) .layout > .sidebar.left { grid-column: 1; }
+.app:not(.mobile) .layout > .stage { grid-column: 2; }
+.app:not(.mobile) .layout > .sidebar.right { grid-column: 3; }
+/* Desktop: a collapsed sidebar is removed entirely (its grid track is 0). */
+.app:not(.mobile) .sidebar:not(.open) { display: none; }
+
+/* Mobile (<=820px, toggled via the .mobile class): sidebars become slide-over drawers. */
+.app.mobile .layout { grid-template-columns: 1fr; transition: none; }
+.app.mobile .sidebar {
+  position: fixed;
+  top: var(--header-h, 52px);
+  bottom: 0;
+  width: min(88vw, 360px);
+  z-index: 50;
+  border-top: none;
+  transition: transform 0.22s ease;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+}
+.app.mobile .sidebar.left { left: 0; transform: translateX(-100%); }
+.app.mobile .sidebar.right { right: 0; transform: translateX(100%); }
+.app.mobile .sidebar.left.open,
+.app.mobile .sidebar.right.open { transform: translateX(0); }
+
+.drawer-backdrop {
+  position: fixed;
+  top: var(--header-h, 52px);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(2, 6, 23, 0.5);
+  z-index: 45;
+}
+
+/*
+ * Boundary control between a sidebar and the stage: a resize grip plus an
+ * always-visible collapse/expand tab. Rendered as an absolutely-positioned
+ * child of .layout (so it is removed from the grid) and tracked to the panel
+ * boundary via the same --left-w / --right-w vars that drive the columns.
+ * When the panel is collapsed the boundary is the screen edge, so the tab
+ * stays reachable to reopen it.
+ */
+.panel-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  z-index: 7;
+  pointer-events: none; /* container is just an anchor; children opt back in */
+}
+.panel-divider.left { left: var(--left-w, 360px); transform: translateX(-50%); }
+.panel-divider.right { right: var(--right-w, 380px); transform: translateX(50%); }
+/* When collapsed, sit flush against the screen edge so the tab is fully visible. */
+.panel-divider.left:not(.open),
+.panel-divider.right:not(.open) { transform: none; }
+
+.pd-grip {
+  position: absolute;
+  inset: 0;
+  cursor: col-resize;
+  touch-action: none;
+  pointer-events: auto;
+}
+.pd-grip::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--border);
+  transition: background 0.12s ease;
+}
+.pd-grip:hover::before { background: var(--accent); }
+
+.pd-toggle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 22px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  pointer-events: auto;
+  z-index: 8;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.pd-toggle:hover { color: var(--text); border-color: var(--accent); background: var(--panel); }
+
+/* Canvas zoom/pan/layout controls overlay. */
+.graph-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  z-index: 5;
+}
+.gc-btn {
+  background: #1e293b;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+}
+.gc-btn:hover { background: #243349; }
+.gc-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.gc-readout { color: var(--muted); font-size: 12px; min-width: 42px; text-align: center; }
+
+/* Larger touch targets on touch devices. */
+@media (pointer: coarse) {
+  .btn { padding: 9px 13px; }
+  .gc-btn { width: 34px; height: 34px; }
+  .panel-toggle { width: 32px; height: 32px; }
+  input, select { padding: 7px 9px; }
 }
 
 .layout {
+  position: relative;
   flex: 1;
   display: grid;
-  grid-template-columns: 360px 1fr 380px;
+  grid-template-columns: var(--left-w, 360px) 1fr var(--right-w, 380px);
   min-height: 0;
 }
 
 .stage {
   position: relative;
+  min-width: 0; /* let the 1fr stage shrink below the canvas's intrinsic 300px width */
   min-height: 0;
   background: radial-gradient(circle at 50% 40%, #0e1830, #0b1120 70%);
 }
 
-.cluster-canvas { display: block; width: 100%; height: 100%; }
+.cluster-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 
 .legend {
   position: absolute;

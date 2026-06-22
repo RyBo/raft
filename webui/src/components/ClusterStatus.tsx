@@ -58,21 +58,37 @@ function derive(state: StateEvent | null): Status {
   return { kind, label, leader, term, aliveVoters, needed, voters: voters.length, learners: learners.length }
 }
 
-export function ClusterStatus({ state }: { state: StateEvent | null }) {
+// variant controls which facts render so the topbar can split status across two
+// rows on mobile: 'primary' = health/leader/term, 'secondary' = quorum/membership.
+export function ClusterStatus({
+  state,
+  variant = 'full',
+}: {
+  state: StateEvent | null
+  variant?: 'full' | 'primary' | 'secondary'
+}) {
   const s = derive(state)
   return (
     <div className="cluster-status">
-      <span className={`cluster-pill ${s.kind}`} title="Derived cluster health">
-        {s.label}
-      </span>
-      <span className="fact">leader <b>{s.leader ? `N${s.leader}` : '—'}</b></span>
-      <span className="fact">term <b>{s.term}</b></span>
-      <span className="fact" title="voters reachable / needed for quorum">
-        quorum <b>{s.aliveVoters}/{s.needed}</b>
-      </span>
-      <span className="fact" title="voters · learners">
-        <b>{s.voters}</b>V·<b>{s.learners}</b>L
-      </span>
+      {variant !== 'secondary' && (
+        <>
+          <span className={`cluster-pill ${s.kind}`} title="Derived cluster health">
+            {s.label}
+          </span>
+          <span className="fact">leader <b>{s.leader ? `N${s.leader}` : '—'}</b></span>
+          <span className="fact">term <b>{s.term}</b></span>
+        </>
+      )}
+      {variant !== 'primary' && (
+        <>
+          <span className="fact" title="voters reachable / needed for quorum">
+            quorum <b>{s.aliveVoters}/{s.needed}</b>
+          </span>
+          <span className="fact" title="voters · learners">
+            <b>{s.voters}</b>V·<b>{s.learners}</b>L
+          </span>
+        </>
+      )}
     </div>
   )
 }
