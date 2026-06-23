@@ -1,0 +1,6 @@
+# Built fresh inside the image — never copy local artifacts in.
+webui/node_modules
+webui/dist
+bin
+data
+.git
